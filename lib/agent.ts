@@ -48,6 +48,23 @@ class BrowserAgent {
     }
   }
 
+  private async _captureState(): Promise<{ url: string; title: string; text: string }> {
+    try {
+      if (!this.page || this.page.isClosed()) {
+        return { url: '', title: '', text: '' }
+      }
+      const url = this.page.url()
+      const title = await this.page.title()
+      const text = ((await this.page.evaluate(() => document.body?.innerText || '').catch(() => '')) || '')
+        .replace(/data:image\/[^;]+;base64,[^\s]+/gi, '[image]')
+        .replace(/https?:\/\/[^\s]+\.(png|jpg|jpeg|gif|svg|webp)(\?[^\s]*)?/gi, '[image]')
+        .substring(0, 2000)
+      return { url, title, text }
+    } catch {
+      return { url: '', title: '', text: '' }
+    }
+  }
+
   async getPageInfo(): Promise<{ url: string; title: string }> {
     try {
       const page = await this.ensurePage()
@@ -78,6 +95,58 @@ class BrowserAgent {
       try {
         const page = await this.ensurePage()
         const lower = command.trim().toLowerCase()
+        const trimmed = command.trim()
+
+        // fill <label> with <value> — form field by label/placeholder/name
+        const fillMatch = trimmed.match(/^fill\s+(.+?)\s+with\s+(.+)$/i)
+        if (fillMatch) {
+          const label = fillMatch[1].trim()
+          const value = fillMatch[2].trim()
+          try {
+            await page.getByLabel(label).fill(value, { timeout: 3000 })
+          } catch {
+            await page.getByPlaceholder(label).fill(value, { timeout: 3000 })
+          }
+          this.refreshScreenshot().catch(() => {})
+          return { result: `✓ filled "${label}"` }
+        }
+
+        // select <option> from <dropdown> — dropdown selection
+        const selectMatch = trimmed.match(/^select\s+(.+?)\s+from\s+(.+)$/i)
+        if (selectMatch) {
+          const option = selectMatch[1].trim()
+          const dropdown = selectMatch[2].trim()
+          await page.getByLabel(dropdown).selectOption({ label: option }, { timeout: 3000 })
+          this.refreshScreenshot().catch(() => {})
+          return { result: `✓ selected "${option}"` }
+        }
+
+        if (lower === 'submit') {
+          await page.locator('button[type="submit"], input[type="submit"]').first().click({ timeout: 5000 })
+          this.refreshScreenshot().catch(() => {})
+          return { result: '✓ submitted form' }
+        }
+
+        if (lower.startsWith('wait for ')) {
+          const text = trimmed.slice(9).trim()
+          await page.locator(`text=${text}`).first().waitFor({ state: 'visible', timeout: 10000 })
+          this.refreshScreenshot().catch(() => {})
+          return { result: `✓ waited for "${text}"` }
+        }
+
+        if (lower.startsWith('wait ')) {
+          const ms = parseInt(trimmed.slice(5).trim(), 10)
+          if (!isNaN(ms) && ms > 0 && ms <= 30000) {
+            await page.waitForTimeout(ms)
+          }
+          return { result: `✓ waited ${ms}ms` }
+        }
+
+        if (lower.startsWith('evaluate ')) {
+          const js = trimmed.slice(9).trim()
+          const result = await page.evaluate(js)
+          return { result: `✓ → ${JSON.stringify(result).substring(0, 500)}` }
+        }
 
         if (lower.startsWith('open ')) {
           let url = command.slice(5).trim()
@@ -174,72 +243,87 @@ class BrowserAgent {
     }
 
     try {
-      const page = await this.ensurePage()
-      const url = page.url()
-      const title = await page.title()
-      const pageText = ((await page.evaluate(() => document.body?.innerText || '').catch(() => '')) || '')
-        .replace(/data:image\/[^;]+;base64,[^\s]+/gi, '[image]')
-        .replace(/https?:\/\/[^\s]+\.(png|jpg|jpeg|gif|svg|webp)(\?[^\s]*)?/gi, '[image]')
-        .substring(0, 3000)
+      await this.ensurePage()
+      const maxSteps = 30
+      let stepLog = ''
+      let lastResult = ''
 
-      const systemPrompt = `You control a web browser. Current state:
-- URL: ${url}
-- Title: ${title}
-- Page text: ${pageText}
+      for (let step = 0; step < maxSteps; step++) {
+        if (step > 0) {
+          await new Promise(r => setTimeout(r, 600))
+        }
 
-Available commands (one per line):
-- open <url> — navigate to a website (auto-adds .com)
+        const state = await this._captureState()
+        const stepHistory = stepLog ? `Steps completed:\n${stepLog.slice(-1200)}` : ''
+        const prevResult = lastResult ? `Last step result: ${lastResult}` : ''
+
+        const systemPrompt = `You control a web browser. Current page:
+URL: ${state.url || 'about:blank'}
+Title: ${state.title || 'New Tab'}
+Page text: ${state.text || '(empty)'}
+
+${stepHistory}
+${prevResult}
+Task: ${message}
+
+Commands (ONE at a time):
+- open <url> — navigate
+- click <text> — click element with that text
+- type <text> — type text
+- fill <label> with <value> — fill form field (by label/placeholder)
+- select <option> from <dropdown> — choose dropdown option
+- submit — click submit button
+- wait for <text> — wait for text to appear (max 10s)
+- wait <ms> — pause (e.g. wait 2000)
 - search for <query> — Google search
-- click <text> — click an element containing that text
-- type <text> — type text with keyboard
 - scroll down / scroll up
 - go back
-- press <key> — keyboard shortcut (Enter, Escape, Tab, Control+A, etc.)
-- copy — copy selected text to internal clipboard
-- paste — type clipboard content
-- refresh — reload page
+- press <key> — keyboard shortcut (Enter, Tab, Escape, etc.)
+- copy / paste
+- refresh / reload
+- evaluate <js> — run JavaScript
 
-Instructions:
-1. First, understand what the user wants.
-2. Break the task into small sequential steps using the commands above.
-3. Each step must be ONE simple command.
-4. Execute steps one by one.
-5. Report what you did.
+Rules:
+1. Return ONE command at a time
+2. After each command you'll see the new page state
+3. Adapt next steps based on what actually happens
+4. Handle errors by trying alternatives
+5. Use "type" to type info, "fill" for form fields
+6. Never ask the user questions
+7. When task is fully done, return {"type":"done","reply":"summary"}
 
-⚠️ CRITICAL: Use multiple simple commands. For example:
-- To search YouTube: "open youtube" → wait → "search for cats" → wait → "press Enter"
-- To click something specific: use "click <visible button/link text>"
-- After navigating to a new page, the next command acts on that page.
+Respond ONLY with valid JSON:
+{"type":"action","cmd":"one command","reply":"what I'm doing"}
+{"type":"done","reply":"Task complete! Summary of what was done."}`
 
-Respond ONLY with valid JSON (no markdown):
-{"type":"action","commands":["cmd1","cmd2",...],"reply":"what I did"}
-{"type":"chat","reply":"your answer"}
-{"type":"done","reply":"already done"}
-{"type":"ask","reply":"clarification needed"}`
-
-      const raw = await groqChat(systemPrompt, message)
-      let parsed: any
-      try {
-        parsed = JSON.parse(raw)
-      } catch {
-        const match = raw.match(/\{[^]*\}/)
-        parsed = match ? JSON.parse(match[0]) : null
-      }
-
-      if (!parsed || !parsed.type) {
-        return { result: raw }
-      }
-
-      if (parsed.type === 'action' && Array.isArray(parsed.commands)) {
-        for (const cmd of parsed.commands) {
-          if (typeof cmd === 'string' && cmd.trim()) {
-            await this.execute(cmd)
-          }
+        const raw = await groqChat(systemPrompt, message)
+        let parsed: any
+        try {
+          parsed = JSON.parse(raw)
+        } catch {
+          const match = raw.match(/\{[^]*\}/)
+          parsed = match ? JSON.parse(match[0]) : null
         }
-        return { result: parsed.reply || `Done: ${parsed.commands.length} steps` }
+
+        if (!parsed || !parsed.type) {
+          return { result: raw }
+        }
+
+        if (parsed.type === 'done') {
+          return { result: parsed.reply || 'Task complete.' }
+        }
+
+        if (parsed.type === 'action' && parsed.cmd) {
+          const cmdResult = await this.execute(parsed.cmd)
+          stepLog += `Step ${step + 1}: "${parsed.cmd}" → ${cmdResult.result}\n`
+          lastResult = cmdResult.result
+          continue
+        }
+
+        return { result: parsed.reply || raw }
       }
 
-      return { result: parsed.reply || raw }
+      return { result: `Reached ${maxSteps} steps. Progress:\n${stepLog}` }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
       return { result: `AI error: ${msg}` }
