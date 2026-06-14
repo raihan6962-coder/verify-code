@@ -20,20 +20,26 @@ class BrowserAgent {
 
   ensurePage(): Promise<Page> {
     if (!this.pagePromise) {
-      this.pagePromise = (async () => {
-        this.browser = await chromium.launch({
-          headless: true,
-          args: ['--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage'],
-        })
-        const context = await this.browser.newContext({
-          viewport: { width: 1280, height: 720 },
-        })
-        this.page = await context.newPage()
-        await this.page.goto('about:blank')
-        return this.page
-      })()
+      this.pagePromise = this._launchBrowser().catch((err) => {
+        console.error('[browser] Launch failed, will retry:', err.message)
+        this.pagePromise = null
+        throw err
+      })
     }
     return this.pagePromise
+  }
+
+  private async _launchBrowser(): Promise<Page> {
+    this.browser = await chromium.launch({
+      headless: true,
+      args: ['--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage'],
+    })
+    const context = await this.browser.newContext({
+      viewport: { width: 1280, height: 720 },
+    })
+    this.page = await context.newPage()
+    await this.page.goto('about:blank')
+    return this.page
   }
 
   private async refreshScreenshot(): Promise<void> {
@@ -253,5 +259,5 @@ Respond ONLY with valid JSON (no markdown):
 }
 
 const agent = new BrowserAgent()
-agent.ensurePage()
+agent.ensurePage().catch(() => {})
 export { agent }
