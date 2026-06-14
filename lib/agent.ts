@@ -165,15 +165,16 @@ class BrowserAgent {
       return this.execute(message)
     }
 
-    const page = await this.ensurePage()
-    const url = page.url()
-    const title = await page.title()
-    const pageText = ((await page.evaluate(() => document.body?.innerText || '').catch(() => '')) || '')
-      .replace(/data:image\/[^;]+;base64,[^\s]+/gi, '[image]')
-      .replace(/https?:\/\/[^\s]+\.(png|jpg|jpeg|gif|svg|webp)(\?[^\s]*)?/gi, '[image]')
-      .substring(0, 3000)
+    try {
+      const page = await this.ensurePage()
+      const url = page.url()
+      const title = await page.title()
+      const pageText = ((await page.evaluate(() => document.body?.innerText || '').catch(() => '')) || '')
+        .replace(/data:image\/[^;]+;base64,[^\s]+/gi, '[image]')
+        .replace(/https?:\/\/[^\s]+\.(png|jpg|jpeg|gif|svg|webp)(\?[^\s]*)?/gi, '[image]')
+        .substring(0, 3000)
 
-    const systemPrompt = `You control a web browser. Current state:
+      const systemPrompt = `You control a web browser. Current state:
 - URL: ${url}
 - Title: ${title}
 - Page text: ${pageText}
@@ -208,7 +209,6 @@ Respond ONLY with valid JSON (no markdown):
 {"type":"done","reply":"already done"}
 {"type":"ask","reply":"clarification needed"}`
 
-    try {
       const raw = await groqChat(systemPrompt, message)
       let parsed: any
       try {
