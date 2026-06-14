@@ -156,12 +156,14 @@ class BrowserAgent {
     }))
   }
 
-  async processMessage(message: string): Promise<{ result: string }> {
-    return (this.processQueue = this.processQueue.then(() => this._processMessage(message)))
+  async processMessage(message: string, apiKey?: string): Promise<{ result: string }> {
+    return (this.processQueue = this.processQueue.then(() => this._processMessage(message, apiKey)))
   }
 
-  private async _processMessage(message: string): Promise<{ result: string }> {
-    if (!hasGroqApiKey()) {
+  private async _processMessage(message: string, apiKey?: string): Promise<{ result: string }> {
+    const hasKey = apiKey ? true : hasGroqApiKey()
+    if (apiKey) setGroqApiKey(apiKey)
+    if (!hasKey) {
       return this.execute(message)
     }
 

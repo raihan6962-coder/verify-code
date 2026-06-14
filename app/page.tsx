@@ -165,12 +165,13 @@ export default function Dashboard() {
               <button
                 onClick={async () => {
                   if (apiKey) {
-                    await fetch('/api/chat', {
+                    const r = await fetch('/api/chat', {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify({ command: '', apiKey }),
                     })
-                    setAiReady(true)
+                    const d = await r.json()
+                    if (d.ai) setAiReady(true)
                   }
                 }}
                 style={{

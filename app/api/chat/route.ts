@@ -12,10 +12,14 @@ export async function POST(req: NextRequest) {
     agent.setApiKey(apiKey)
   }
 
-  if (!command || typeof command !== 'string') {
+  if (typeof command !== 'string') {
     return NextResponse.json({ result: 'Missing "command" in request body' }, { status: 400 })
   }
 
-  const result = await agent.processMessage(command)
+  if (!command.trim()) {
+    return NextResponse.json({ result: '', ai: agent.hasAi })
+  }
+
+  const result = await agent.processMessage(command, apiKey)
   return NextResponse.json({ ...result, ai: agent.hasAi })
 }
