@@ -18,15 +18,15 @@ export async function groqChat(system: string, user: string): Promise<string> {
     body: JSON.stringify({
       model: 'llama-3.3-70b-versatile',
       messages: [
-        { role: 'system', content: system },
-        { role: 'user', content: user },
+        { role: 'system', content: [{ type: 'text', text: system }] },
+        { role: 'user', content: [{ type: 'text', text: user }] },
       ],
       temperature: 0.1,
     }),
   })
   if (!res.ok) {
     const text = await res.text()
-    throw new Error(`Groq ${res.status}: ${text}`)
+    throw new Error(text)
   }
   const data = await res.json()
   return data.choices[0].message.content

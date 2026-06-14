@@ -168,7 +168,10 @@ class BrowserAgent {
     const page = await this.ensurePage()
     const url = page.url()
     const title = await page.title()
-    const pageText = await page.evaluate(() => document.body?.innerText?.substring(0, 3000) || '').catch(() => '')
+    const pageText = ((await page.evaluate(() => document.body?.innerText || '').catch(() => '')) || '')
+      .replace(/data:image\/[^;]+;base64,[^\s]+/gi, '[image]')
+      .replace(/https?:\/\/[^\s]+\.(png|jpg|jpeg|gif|svg|webp)(\?[^\s]*)?/gi, '[image]')
+      .substring(0, 3000)
 
     const systemPrompt = `You control a web browser. Current state:
 - URL: ${url}
